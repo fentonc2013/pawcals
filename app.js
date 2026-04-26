@@ -288,12 +288,11 @@ async function attemptLogin(username, password) {
 
 // ----------------------------------------------------------------
 // INTERNET FOOD SEARCH
-// Searches Open Pet Food Facts first (dog/cat food database),
-// then supplements with Open Food Facts (human food) if pet results are sparse.
-// Results are grouped and labeled so the user always knows the source.
+// Searches Open Pet Food Facts (dog/cat food database) by keyword.
+// Also supports exact barcode/UPC lookup via the OPFF product API.
 // ----------------------------------------------------------------
-const OPFF_SEARCH = 'https://world.openpetfoodfacts.org/cgi/search.pl';
-const OFF_SEARCH  = 'https://world.openfoodfacts.org/cgi/search.pl';
+const OPFF_SEARCH  = 'https://world.openpetfoodfacts.org/cgi/search.pl';
+const OPFF_PRODUCT = 'https://world.openpetfoodfacts.org/api/v0/product';
 
 // inetResults is an array of { header, items } groups
 let inetResults = [];
@@ -348,51 +347,78 @@ function mergeDedup(a, b) {
   return Array.from(seen.values());
 }
 
-async function doInetSearch() {
-  const input = document.getElementById('inet-search-input');
-  const q = input?.value.trim();
+// Route to barcode lookup if input is 8–13 digits, otherwise keyword search
+function doSmartSearch() {
+  const q = document.getElementById('inet-search-input')?.value.trim() ?? '';
+  if (/^\d{8,13}$/.test(q)) {
+    doBarcodeSearch(q);
+  } else {
+    doInetSearch(q);
+  }
+}
+
+async function doInetSearch(q) {
+  q = (q ?? document.getElementById('inet-search-input')?.value.trim()) || '';
   if (!q) return;
   inetLoading = true;
   inetResults = [];
+  const btn = document.getElementById('inet-search-btn');
+  if (btn) btn.disabled = true;
   renderInetResults();
 
   const baseParams = { search_simple: 1, action: 'process', page_size: 20 };
   const brandParams = { tagtype_0: 'brands', tag_contains_0: 'contains', tag_0: q, action: 'process', page_size: 20 };
 
   try {
-    // Run all four fetches in parallel: text search + brand search × both databases
-    const [petText, petBrand, humText, humBrand] = await Promise.all([
+    // Run text + brand searches in parallel against the pet food database
+    const [petText, petBrand] = await Promise.all([
       fetchFoodDb(OPFF_SEARCH, { ...baseParams, search_terms: q }).catch(() => []),
       fetchFoodDb(OPFF_SEARCH, brandParams).catch(() => []),
-      fetchFoodDb(OFF_SEARCH,  { ...baseParams, search_terms: q }).catch(() => []),
-      fetchFoodDb(OFF_SEARCH,  brandParams).catch(() => []),
     ]);
 
-    const isPet = true;
     const petAll = mergeDedup(
-      petText.map(p => mapProduct(p, isPet)),
-      petBrand.map(p => mapProduct(p, isPet))
-    ).slice(0, 10);
-
-    const humAll = mergeDedup(
-      humText.map(p => mapProduct(p, false)),
-      humBrand.map(p => mapProduct(p, false))
-    );
-
-    // Remove human results whose names duplicate pet results
-    const petNames = new Set(petAll.map(f => f.name.toLowerCase()));
-    const humFiltered = humAll.filter(f => !petNames.has(f.name.toLowerCase())).slice(0, 8);
+      petText.map(p => mapProduct(p, true)),
+      petBrand.map(p => mapProduct(p, true))
+    ).slice(0, 15);
 
     inetResults = [];
-    if (petAll.length > 0)     inetResults.push({ header: '🐾 Pet Food Database', items: petAll });
-    if (humFiltered.length > 0) inetResults.push({ header: '🥗 Human Food / Other', items: humFiltered });
+    if (petAll.length > 0) inetResults.push({ header: '🐾 Pet Food Database', items: petAll });
 
     if (inetResults.length === 0) toast('No results found. Try a shorter keyword or brand name.', 'warn');
   } catch (e) {
     toast('Search failed. Check your connection and try again.', 'error');
   } finally {
     inetLoading = false;
+    if (btn) btn.disabled = false;
     renderInetResults();
+  }
+}
+
+async function doBarcodeSearch(barcode) {
+  if (!barcode) return;
+
+  const btn = document.getElementById('inet-search-btn');
+  if (btn) btn.disabled = true;
+  inetResults = [];
+  renderInetResults();
+
+  try {
+    const r = await fetch(`${OPFF_PRODUCT}/${barcode}.json`, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+
+    if (data.status !== 1 || !data.product?.product_name?.trim()) {
+      toast('Barcode not found in pet food database. Try searching by name instead.', 'warn');
+      return;
+    }
+
+    const food = mapProduct(data.product, true);
+    inetResults = [{ header: '🔍 Barcode Result', items: [food] }];
+    renderInetResults();
+  } catch (e) {
+    toast('Barcode lookup failed. Check your connection and try again.', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -401,7 +427,7 @@ function renderInetResults() {
   if (!el) return;
 
   if (inetLoading) {
-    el.innerHTML = `<div class="search-loading"><span class="spinner dark"></span> Searching pet food & food databases...</div>`;
+    el.innerHTML = `<div class="search-loading"><span class="spinner dark"></span> Searching pet food database...</div>`;
     return;
   }
 
@@ -1385,13 +1411,13 @@ function renderFoods() {
     <div class="card" style="margin-bottom:14px">
       <div class="card-title">Search Online</div>
       <p class="text-sm text-muted" style="margin-bottom:10px">
-        Search the Open Food Facts database. Click <strong>+ Add</strong> on any result to import it into your library.
+        Search by name, brand, UPC, or barcode. Click <strong>+ Add</strong> on any result to import it into your library.
       </p>
       <div class="flex gap-8" style="margin-bottom:4px">
         <input class="form-input" id="inet-search-input" type="search"
-          placeholder="e.g. Royal Canin, chicken breast, Bocce's..."
-          onkeydown="if(event.key==='Enter') doInetSearch()">
-        <button class="btn btn-primary" onclick="doInetSearch()" style="white-space:nowrap">Search</button>
+          placeholder="Name, brand, UPC, or barcode..."
+          onkeydown="if(event.key==='Enter') doSmartSearch()">
+        <button class="btn btn-primary" id="inet-search-btn" onclick="doSmartSearch()" style="white-space:nowrap">Search</button>
       </div>
       <div id="inet-results"></div>
     </div>
