@@ -705,6 +705,12 @@ body {
 /* =============================================
    FOOD LIBRARY ITEMS
    ============================================= */
+.food-list {
+  max-height: 640px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .food-item {
   display: flex;
   align-items: center;

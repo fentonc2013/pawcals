@@ -1402,7 +1402,7 @@ function renderFoods() {
           ? `<div class="empty-log"><div class="empty-icon">🍽</div>No foods in your library yet.</div>`
           : items.length === 0
             ? `<div class="empty-log"><div class="empty-icon">🔍</div>No matching foods.</div>`
-            : items.map(f => foodItemHtml(f)).join('')
+            : `<div class="food-list">${items.map(f => foodItemHtml(f)).join('')}</div>`
         }
       </div>
     </div>
@@ -1462,8 +1462,10 @@ function openAddFoodModal() {
 }
 
 function openFoodModal(food, focusKcal = false) {
-  // food = null → add mode, food = obj → edit mode
-  const isEdit = !!food;
+  // food = null → add mode (blank form)
+  // food = library entry → edit mode
+  // food = search-result import → add mode with prefilled fields
+  const isEdit = !!food && S.foods.some(x => x.id === food.id);
   const f = food || { name:'', brand:'', kcalPer100g:'', defaultServingGrams:100, category:'custom' };
   const cats  = ['kibble','wet','treat','human','custom'];
   const units = ['cup','tbsp','tsp','each','g'];
