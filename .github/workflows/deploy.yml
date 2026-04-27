@@ -20,6 +20,8 @@ jobs:
           const FIREBASE_CONFIG = ${{ secrets.FIREBASE_CONFIG }};
           const APP_SALT = '${{ secrets.APP_SALT }}';
           ENDOFFILE
+          # Allow the generated config.js to be deployed (it's gitignored locally)
+          sed -i '/^config\.js$/d' .gitignore
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
